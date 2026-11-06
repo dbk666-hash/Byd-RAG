@@ -1,6 +1,11 @@
 .env
+.env.*
+!.env.example
+.venv/
 __pycache__/
 *.pyc
+.idea/
+.pytest_cache/
 data/chroma/
 data/raw/
-.idea/
+eval/runs/

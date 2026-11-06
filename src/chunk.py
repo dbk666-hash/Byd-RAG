@@ -1,37 +1,49 @@
-# -*- coding: utf-8 -*-
-"""Step 4 切块: 把解析好的全文切成固定大小的小块(带页码)。
-策略(v0): 固定 512 字符 + 相邻块重叠 64 字符。
-块对应的页码 = 块内最后出现的页码标记(近似但够用)。
-"""
+"""唯一的512/64切块实现；建库、检索和预览均从这里导入。"""
 import re
 from pathlib import Path
 
-PARSED = Path(__file__).resolve().parent.parent / "data" / "parsed"
-
-CHUNK_SIZE = 512     # 每块约 512 字符(约合一个"段落"量级)
-OVERLAP = 64         # 相邻块重叠 64 字符,防止信息被切在边界丢失
+from config import CHUNK_SIZE, OVERLAP, PARSED
 
 def chunk_text(text: str):
-    """按字符窗口切块,返回 [(页码, 块文本), ...]"""
-    chunks = []
-    last_page = 0
-    i = 0
-    n = len(text)
+    """512/64 固定窗口切块 —— 顺序与 build_index 完全一致,块 id 才能对齐"""
+    chunks, last_page, i, n = ([], 0, 0, len(text))
     while i < n:
-        window = text[i:i + CHUNK_SIZE]              # 取一个窗口
-        pages = re.findall(r"PAGE (\d+)", window)    # 找窗口内页码标记
+        latter = min(i + CHUNK_SIZE, len(text))
+        window = text[i:latter]
+        pages = re.findall('PAGE (\\d+)', window)
         if pages:
-            last_page = int(pages[-1])               # 用最近一个页码
+            last_page = int(pages[-1])
         chunks.append((last_page, window))
-        i += CHUNK_SIZE - OVERLAP                    # 前进 = 块长 - 重叠
+        i += CHUNK_SIZE - OVERLAP
     return chunks
 
-for txt in sorted(PARSED.glob("*.txt")):
-    text = txt.read_text(encoding="utf-8")
-    chunks = chunk_text(text)
-    print(f"{txt.name}: 全文 {len(text)} 字符 -> 切成 {len(chunks)} 块")
-    # 抽查第一块前 150 字,看文本质量与页码是否正确
-    p, first = chunks[0]
-    print(f"   抽样[第{p}页]: {first[:150].replace(chr(10),' ')}")
 
-print("切块完成。")
+def load_corpus(parsed_dir=PARSED):
+    """返回正文列表、ID列表、cid->(cid, year, page, text)，保留原编号顺序。"""
+    corpus, ids, meta = [], [], {}
+    for path in sorted(Path(parsed_dir).glob("*.txt")):
+        match = re.search(r"20\d\d", path.stem)
+        if not match:
+            raise ValueError(f"年报文件名缺少年份：{path.name}")
+        for index, (page, text) in enumerate(chunk_text(path.read_text(encoding="utf-8"))):
+            cid = f"{path.stem}_{index}"
+            corpus.append(text)
+            ids.append(cid)
+            meta[cid] = (cid, match.group(), page, text)
+    if not corpus:
+        raise FileNotFoundError(f"未找到解析文本：{parsed_dir}")
+    return corpus, ids, meta
+
+
+def main():
+    for path in sorted(PARSED.glob("*.txt")):
+        text = path.read_text(encoding="utf-8")
+        chunks = chunk_text(text)
+        print(f"{path.name}: {len(text)}字符 -> {len(chunks)}块")
+        if chunks:
+            page, first = chunks[0]
+            print(f"  第{page}页：{first[:150].replace(chr(10), ' ')}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,7 @@
+# 与本次验证使用的Python 3.12环境一致的直接依赖。
+requests==2.34.2
+chromadb==1.5.9
+jieba==0.42.1
+rank-bm25==0.2.2
+python-dotenv==1.2.3
+PyMuPDF==1.28.2

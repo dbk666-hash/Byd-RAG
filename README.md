@@ -1,117 +1,117 @@
 # 比亚迪年报智能问答（RAG）
 
-一个基于比亚迪 2021–2024 年年度报告构建的 **RAG 智能问答系统**：用自然语言提问，系统从年报原文中检索依据，由大模型生成答案，并给出 **年份 + 页码的出处引用**。
+基于比亚迪2021–2024年年报的学习项目：问题经过向量与BM25双路检索、年份过滤、重排或RRF融合，再组织原文证据并生成带引用的回答。
 
-## 项目背景
+当前为命令行程序。财务表格、单位、统计口径和模型计算仍有局限，不把“能生成回答”当作“回答已经验证正确”。
 
-- **背景**：为系统学习 RAG（检索增强生成）全流程、并为大模型应用开发岗求职做实战项目。
-- **目标**：把年报查询从"人工翻几百页 PDF、关键词搜不全"，变成"自然语言提问、答案有原文依据可追溯"。
+## 当前流程
 
-## 系统架构（两阶段）
-
-```
-[离线建库 · 只跑一次]
-  年报 PDF → PyMuPDF 解析（保留页码） → 切块（512 字 / 重叠 64）
-        ├─→ bge-m3 向量化 → 存入 Chroma（带 年份 / 页码 元数据）
-        └─→ jieba 分词 → 建立 BM25 索引
-
-[在线问答 · 每次提问]
-  问题 → bge-m3 向量化 → 向量库 top10 ┐
-  问题 → jieba 分词   → BM25 top10    ┴→ RRF 融合 → top8
-       → 拼接带引用编号的 Prompt → 大模型（DeepSeek） → 带出处的答案
+```text
+离线：PDF → 带PAGE标记的文本 → 512字符/64重叠切块 → bge-m3 → Chroma
+在线：问题 → 年份提取 → 向量Top20 + BM25 Top20
+     → 合并去重 → BGE重排Top5（或 --no-rerank 使用RRF）
+     → 邻块扩展（radius=2，正文预算8000字符）
+     → 编号引用与提示词 → Qwen/Qwen3.5-4B生成（关闭思考）
 ```
 
-**为什么这样设计：**
+年份过滤在两条检索路径截取候选之前生效。重排模式是候选去重后直接重排，不代表同时用了RRF预筛。
 
-- **两阶段的核心是"把重活提前做"**：离线阶段（解析、切块、向量化、建 BM25 索引）耗时长且消耗 API 额度，**只跑一次**；在线阶段每次提问只做轻量的"问题向量化 → 检索 → 融合 → 生成"，保证响应速度与成本。
-- **检索采用"向量 + BM25"双路并 RRF 融合**：纯向量检索对"毛利率"这类精确专业词召回较弱；BM25 依靠关键词词频补足字面匹配能力。两者结果用 RRF（倒数排名融合）打分后取 top8，兼顾语义与精确匹配。
+## 项目结构
 
-## 技术栈
-
-| 环节 | 用了什么 |
-|---|---|
-| PDF 解析 | PyMuPDF |
-| 切块 | 自实现（固定字符窗口 + 重叠） |
-| 向量化 | bge-m3（SiliconFlow API） |
-| 向量库 | Chroma |
-| 关键词检索 | rank-bm25 + jieba |
-| 融合排序 | 自实现 RRF |
-| 答案生成 | DeepSeek |
-| 框架 | **未使用 LangChain**，全部基于原生库自实现 |
-
-## 目录结构
-
-```
-├─ data/
-│  ├─ raw/        原始年报 PDF
-│  ├─ parsed/     解析后的带页码文本
-│  └─ chroma/     向量库（可重建）
-├─ src/
-│  ├─ parse_pdf.py       PDF → 带页码文本
-│  ├─ chunk.py           切块逻辑（验证用）
-│  ├─ build_index.py     切块 + 向量化 + 入库
-│  ├─ ask_v2.py          完整问答（混合检索 + 生成 + 引用）
-│  ├─ search.py          纯向量检索（V0，对照用）
-│  ├─ ask.py             V0 端到端（纯向量，对照用）
-│  ├─ bm25_search.py     BM25 关键词检索（验证用）
-│  ├─ hybrid_search.py   向量 + BM25 的 RRF 融合检索
-│  ├─ diagnose.py        检索诊断工具（召回质量排查）
-│  └─ check_pdf.py       PDF 体检（文本型 / 扫描件判断）
-└─ README.md
+```text
+src/
+  config.py          路径、切块/检索参数、厂商与模型配置
+  api_client.py      向量化、批量向量化、重排、生成的HTTP调用
+  chunk.py           唯一切块实现、加载语料、预览切块
+  retrieval.py       BM25/向量检索、年份过滤、RRF、重排结果映射
+  context.py         邻块扩展、证据编号、提示词
+  pipeline.py        完整问答流程，供CLI、评测和测试共用
+  hybrid_search.py   当前问答入口
+  parse_pdf.py       PDF解析
+  build_index.py     建库；跳过已存在且文本相同的块
+  search.py          纯向量检索演示
+  bm25_search.py     纯本地BM25演示
+  diagnose.py        向量召回诊断、关键词原文定位
+  check_pdf.py       PDF文本质量检查
+  evaluate.py        按题集逐题执行并保存结果
+tests/
+  test_core.py       隔离语料和假接口的离线验证
+eval/
+  questions.jsonl    按任务意图区分的50题草稿
+  README.md          运行与评分说明
+data/
+  raw/              本地PDF，不提交Git
+  parsed/           带页码标记的年报文本
+  chroma/           本地向量库，不提交Git
 ```
 
-## 快速开始
+旧的 `ask.py`、`ask_v2.py` 重复问答流程已合并到当前入口；历史实现可从Git记录查看。临时切片打印脚本 `test01.py` 已移除。`search.py`、`bm25_search.py` 保留用于学习与对照，但不再复制切块或接口代码。
+
+## 安装与配置
+
+本次验证环境为Python 3.12。依赖列在 `requirements.txt`，无需LangChain。
 
 ```powershell
-pip install pymupdf requests chromadb jieba rank-bm25 python-dotenv
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if (!(Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-在项目根目录新建 `.env`（**不要提交到 git**）：
+编辑 `.env`，默认只需提供 `SILICONFLOW_API_KEY`。Qwen、bge-m3和BGE重排均使用该密钥，不要求额外提供GLM密钥。
 
-```
-SILICONFLOW_API_KEY=sk-你的key
-```
+如果切换生成厂商，设置 `RAG_CHAT_PROVIDER=deepseek` 并提供 `DeepSeek_API_KEY`，或设置 `RAG_CHAT_PROVIDER=glm` 并提供 `GLM_API_KEY`。向量和重排仍需SiliconFlow密钥。实际模型权限、可用性及计费以账户为准。
 
-依次运行：
+默认 `RAG_TRUST_ENV=false`，跳过Requests自动读取的代理设置；这不保证绕过系统TUN。需要遵循系统代理时改为 `true`。
+
+## 数据与建库
+
+仓库已有解析文本时可直接建库；若从PDF开始，把报告放入 `data/raw/`，文件名包含年份，例如 `BYD_2024.pdf`：
 
 ```powershell
-python src/parse_pdf.py      # 1. 解析 PDF → data/parsed
-python src/build_index.py    # 2. 切块 + 向量化 + 入库
-python src/ask_v2.py         # 3. 提问（混合检索 + 生成）
+python src/check_pdf.py
+python src/parse_pdf.py
+python src/chunk.py
+python src/build_index.py
 ```
 
-## 示例问答
+在已配置解释器的PyCharm终端中，也可直接使用这些 `python` 命令。若使用上面新建的虚拟环境，可用 `.\.venv\Scripts\python.exe` 替换 `python`。
 
+切块编号保持 `<文件名>_<顺序号>`。建库和在线语料使用同一实现。已有同ID但正文不同的块会拒绝继续添加；请使用独立的 `RAG_DB_PATH` 建实验库，不要混用不同切块或向量模型的旧索引。建库不会删除、清空原有集合。
+
+## 问答与检索演示
+
+```powershell
+python src/hybrid_search.py
+python src/hybrid_search.py --query "2024年比亚迪的营业收入是多少？"
+python src/hybrid_search.py --no-rerank
+python src/bm25_search.py
+python src/search.py
 ```
-Q: 比亚迪的主要业务有哪些？
-A: 2024 年报"主要经营"口径包括：以新能源汽车为主的汽车业务、手机部件及组装业务、
-   二次充电电池及光伏业务，并积极拓展城市轨道交通及其他业务。（2024年报 P14）
 
-Q: 2024 年净利润同比如何？
-A: 归母净利润约 402.54 亿元，同比 +34.00%；扣非后同比增长 29.94%。（2024年报 P11）
+纯BM25演示不联网、不需要密钥或向量库。导入模块不会自动运行交互循环、建BM25或打开Chroma；首次检索时才加载所需状态。
 
-Q: 2024 年毛利率和 2023 年相比如何？
-A: 年报未披露公司整体综合毛利率，系统按分口径回答：分地区境内 25.59% / 境外 38.49%，
-   分销售模式直销 27.96% / 经销 30.02%（2024年报 P25），并明确说明"无整体口径数据"。
+## 验证与评测
+
+```powershell
+python -m unittest discover -s tests -v
+python src/evaluate.py --limit 5
+python src/evaluate.py --limit 50
 ```
 
-> 第三条尤其能体现系统的可靠性：**资料不足时主动说明，而非编造。**
+单元测试使用临时语料、假向量集合和假HTTP响应，不使用原索引或真实模型。评测命令则调用真实接口，把完整回答、证据、提示词、耗时与错误写入独立的 `eval/runs/*.jsonl` 文件。
 
-## 已知局限
+题集有参考要点，但仍是已使用过事实的开发集，不是独立盲测。评测脚本不自动给出语义准确率；需要分别核对核心任务、单位/年份/符号、引用支撑及额外推断。详见 [eval/README.md](eval/README.md)。
 
-- 年报本身未披露"公司整体综合毛利率"，系统只能按分行业 / 分地区口径回答，并**主动说明该限制而非编造**。
-- **表格数字的单位（如"千元"）与表头在切块时可能被切断**，导致个别数字表述不稳定；根因未解决（部分场景模型能自行换算，但不可靠）。
-- top-k 结果中会混入审计报告模板、董事会公告等**噪声块**（依赖 prompt 让模型忽略）。
-- 尚未引入 **Rerank 精排**；BM25 侧的年份过滤尚未自动化。
-- 尚未建立**量化评估集**，目前以人工抽查真实问题为主。
+## 已知局限与后续工作
 
-## Roadmap
+- 仍使用原固定长度切块，表头、单位和合并/母公司口径可能与数字分离。本次代码整理没有改变切块策略，也没有重建旧索引。
+- 块页码来自窗口内最后一个PAGE标记，跨页块的页码可能近似，核对时应结合块ID和原文。
+- 模型可能把千元当元、错配表格年度列，或在操作数正确时算错；引用编号存在不等于每条引用都支持答案。
+- 保留原有重试策略：问题向量化对连接/超时重试，生成对429等待重试；重排及生成的其他网络错误仍会抛出，需调用方处理。
+- 当前入口支持命令行；FastAPI服务和网页尚未接入这个真实项目。
 
-- [ ] 财务报表结构化抽取（解决表格单位 / 表头丢失问题）
-- [ ] 引入 Rerank 两阶段精排
-- [ ] 构建检索评估集，量化命中率并做切块策略对比
-- [ ] 支持多公司年报对比问答
+下一步重点是结构化财务证据与单位/口径保留，再对确定性计算引入程序校验。后续改动应使用同一题集做对照。
 
-## 说明
+## 开发说明
 
-本项目代码在 AI 辅助下完成，本人负责数据管线设计与实现、检索方案设计与调试，并理解每个环节的原理与取舍。
+这是AI辅助的学习项目。核心模块按实际职责拆分，保留可追踪的检索与证据链；不以README中的示例回答替代实际评测。

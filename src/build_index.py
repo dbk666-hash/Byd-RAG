@@ -1,79 +1,36 @@
-# -*- coding: utf-8 -*-
-"""build_index.py: 年报全文 -> 切块 -> 向量化 -> 存入 Chroma 向量库。
-输入:  data/parsed/*.txt        (parse_pdf.py 产物)
-配置:  项目根 .env 中 SILICONFLOW_API_KEY=sk-xxx
-输出:  data/chroma/  (本地向量库)
-"""
-import os, re, time, requests, chromadb
-from pathlib import Path
-from dotenv import load_dotenv
+"""从共享切块结果建库；不会重置索引，也不重复嵌入已有的相同块。"""
+import time
 
-ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")                     # 从项目根读 .env
+import chromadb
 
-API_KEY = os.getenv("SILICONFLOW_API_KEY")
-assert API_KEY, "没读到 key!请在项目根目录建 .env 并写入 SILICONFLOW_API_KEY=sk-xxx"
+from api_client import embed_texts
+from chunk import load_corpus
+from config import COLLECTION_NAME, DB_PATH, PARSED
 
-EMBED_URL = "https://api.siliconflow.cn/v1/embeddings"
-EMBED_MODEL = "BAAI/bge-m3"                    # embedding 模型
-CHUNK_SIZE, OVERLAP = 512, 64                  # 与 chunk.py 相同的切块参数
-BATCH = 16                                     # 每批传给 API 的文本条数
-DB_PATH = ROOT / "data" / "chroma"
+BATCH = 16
 
-def embed_texts(texts: list):
-    """把一批文本向量化,返回向量列表(含简单重试)"""
-    for attempt in range(3):
-        resp = requests.post(EMBED_URL,
-            headers={"Authorization": f"Bearer {API_KEY}"},
-            json={"model": EMBED_MODEL, "input": texts}, timeout=60)
-        if resp.status_code == 200:
-            data = sorted(resp.json()["data"], key=lambda x: x["index"])
-            return [d["embedding"] for d in data]
-        print(f"  重试 {attempt+1}/3, HTTP {resp.status_code}: {resp.text[:120]}")
-        time.sleep(2 + attempt * 2)
-    raise RuntimeError("embedding 多次失败,请检查 key / 模型权限 / 网络")
 
-def chunk_text(text: str):
-    """固定字符窗口切块(和 chunk.py 同逻辑)"""
-    chunks, last_page, i, n = [], 0, 0, len(text)
-    while i < n:
-        window = text[i:i + CHUNK_SIZE]
-        pages = re.findall(r"PAGE (\d+)", window)
-        if pages:
-            last_page = int(pages[-1])
-        chunks.append((last_page, window))
-        i += CHUNK_SIZE - OVERLAP
-    return chunks
+def build_index(parsed_dir=PARSED, db_path=DB_PATH):
+    _, ids, meta = load_corpus(parsed_dir)
+    client = chromadb.PersistentClient(path=str(db_path))
+    collection = client.get_or_create_collection(COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
+    stored = collection.get(include=["documents"])
+    existing = dict(zip(stored["ids"], stored["documents"]))
+    for cid in set(existing) & set(meta):
+        if existing[cid] != meta[cid][3]:
+            raise ValueError(f"已有块{cid}与当前文本不同；请使用独立索引目录，不要覆盖旧库")
+    pending = [cid for cid in ids if cid not in existing]
+    for start in range(0, len(pending), BATCH):
+        batch = pending[start:start + BATCH]
+        documents = [meta[cid][3] for cid in batch]
+        vectors = embed_texts(documents)
+        collection.add(ids=batch, embeddings=vectors, documents=documents,
+                       metadatas=[{"year": meta[cid][1], "page": meta[cid][2]} for cid in batch])
+        print(f"已新增 {min(start + BATCH, len(pending))}/{len(pending)} 块")
+        time.sleep(0.3)
+    print(f"完成：语料{len(ids)}块，本次新增{len(pending)}块。向量库：{db_path}")
+    return len(pending)
 
-# --- 1) 先测一个短句:验证 key、模型、网络通不通 ---
-print("测试:向量化一个短句...")
-v = embed_texts(["你好"])[0]
-print(f"OK! 向量维度 = {len(v)} (bge-m3 应为 1024)")
 
-# --- 2) 建/取向量库 ---
-client = chromadb.PersistentClient(path=str(DB_PATH))
-col = client.get_or_create_collection(
-    name="byd_reports", metadata={"hnsw:space": "cosine"})
-
-# --- 3) 逐份年报:切块 -> 分批向量化 -> 入库 ---
-PARSED = ROOT / "data" / "parsed"
-total = 0
-for txt in sorted(PARSED.glob("*.txt")):
-    m = re.search(r"(20\d\d)", txt.stem)          # 从文件名提取年份
-    year = m.group(1) if m else "unknown"
-    chunks = chunk_text(txt.read_text(encoding="utf-8"))
-
-    ids = [f"{txt.stem}_{i}" for i in range(len(chunks))]        # 每条唯一 ID
-    docs = [c for _, c in chunks]                                # 文本
-    metas = [{"year": year, "page": p} for p, _ in chunks]       # 元数据
-
-    for s in range(0, len(chunks), BATCH):
-        e = min(s + BATCH, len(chunks))
-        vecs = embed_texts(docs[s:e])
-        col.add(ids=ids[s:e], embeddings=vecs,
-                documents=docs[s:e], metadatas=metas[s:e])
-        print(f"  {txt.stem}: 已入库 {e}/{len(chunks)} 块")
-        time.sleep(0.3)                            # 防止触发限流
-    total += len(chunks)
-
-print(f"\n全部完成,共 {total} 块入库。向量库位置: {DB_PATH}")
+if __name__ == "__main__":
+    build_index()

@@ -6,8 +6,10 @@
 import pymupdf
 from pathlib import Path
 
-RAW = Path(__file__).resolve().parent.parent / "data" / "raw"
-OUT = Path(__file__).resolve().parent.parent / "data" / "parsed"
+from config import ROOT, PARSED
+
+RAW = ROOT / "data" / "raw"
+OUT = PARSED
 
 PAGE_SEP = "=====PAGE {}=====\n"   # 页码分隔线
 MIN_CHARS = 80                     # 低于此字符数的页会提示(封面/空白页)
