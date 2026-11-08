@@ -16,7 +16,7 @@ import build_index
 import config
 from chunk import chunk_text, load_corpus
 from context import build_prompt, expand_context, format_context
-from pipeline import answer_question
+from pipeline import NO_EVIDENCE, answer_question
 from retrieval import Retriever, rrf_fuse
 
 
@@ -131,6 +131,53 @@ print("safe imports")
         self.assertEqual(chat.call_args.args[0], build_prompt(result["query"], result["context"]))
         self.assertEqual(result["answer"], "回答[证据1]")
         self.assertTrue(all(row[1] == "2024" for row in result["evidence_records"]))
+
+    def test_total_assets_pipeline_uses_scoped_rows_from_the_reports(self):
+        engine = Retriever(parsed_dir=config.ROOT / "data/parsed")
+        cases = [
+            ("2022年比亚迪账上的资产一共有多少？", ["493,860,646 千元"], [127]),
+            ("2022年比亚迪集团母公司资产总额是多少？", ["76,250,627 千元"], [135]),
+            ("2022年公司资产负债表的资产总计", ["76,250,627 千元"], [135]),
+            ("2022年合并总资产和母公司总资产分别是多少？",
+             ["493,860,646 千元", "76,250,627 千元"], [127, 135]),
+            ("2021、2024年比亚迪资产总额分别是多少？",
+             ["295,780,147,000.00 元", "783,355,855 千元"], [137, 142]),
+        ]
+        with patch.object(engine, "retrieve", side_effect=AssertionError("hybrid retrieval")), patch(
+            "api_client.chat_reply", return_value="回答[证据1]"
+        ) as chat:
+            for query, amounts, pages in cases:
+                with self.subTest(query=query):
+                    result = answer_question(query, retriever=engine)
+                    self.assertEqual([row[2] for row in result["evidence_records"]], pages)
+                    for amount in amounts:
+                        self.assertIn(f"年末资产总计：{amount}", result["context"])
+                    self.assertEqual(result["context"].count("原文："), len(amounts))
+                    if len(amounts) == 1:
+                        other_amount = "493,860,646" if pages == [135] else "76,250,627"
+                        self.assertNotIn(other_amount, result["context"])
+                    self.assertEqual(chat.call_args.args[0], build_prompt(query, result["context"]))
+
+    def test_total_assets_without_evidence_abstains_and_other_metrics_use_hybrid(self):
+        (self.parsed / "BYD_2023.txt").write_text(
+            "=====PAGE 8=====\n二、财务报表\n1、公司资产负债表\n单位：千元\n"
+            "2023 年12月31日\n2022 年12月31日\n资产总计\n200\n100\n"
+            "三、基本情况\n", encoding="utf-8",
+        )
+        engine = self.engine()
+        with patch.object(engine, "retrieve", return_value=[]) as hybrid, patch("api_client.chat_reply") as chat:
+            for query in ("2023年总资产是多少？", "2099年总资产是多少？"):
+                result = answer_question(query, retriever=engine)
+                self.assertEqual(result["answer"], NO_EVIDENCE)
+                self.assertIsNone(result["prompt"])
+            hybrid.assert_not_called()
+            chat.assert_not_called()
+
+            for query in ("2023年流动资产一共有多少？", "2023年净资产是多少？",
+                          "2023年总资产同比增长多少？"):
+                answer_question(query, retriever=engine)
+                self.assertEqual(hybrid.call_args.args, (query,))
+            self.assertEqual(hybrid.call_count, 3)
 
     def test_pipeline_labels_cross_table_evidence_by_fragment(self):
         report = (

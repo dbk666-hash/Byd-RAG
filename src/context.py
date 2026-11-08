@@ -86,6 +86,14 @@ def split_chunk_by_table(cid, body, text, table_ranges):
     return fragments
 
 
+def format_evidence(number, cid, year, page, body):
+    doc_name = cid.rsplit("_", 1)[0]
+    return (
+        f"[证据{number}]\n文档：{doc_name}\n块id：{cid}\n年份：{year}\n"
+        f"页码：{page}\n正文：{body}"
+    )
+
+
 def format_context(results, *, parsed_dir=None):
     parsed_dir = Path(parsed_dir) if parsed_dir is not None else config.PARSED
     reports = {}
@@ -113,11 +121,7 @@ def format_context(results, *, parsed_dir=None):
                 fragment = f"\n【{label}】\n{fragment}\n【表格片段结束】\n"
             sections.append(fragment)
 
-        formatted_body = "".join(sections)
-        evidences.append(
-            f"[证据{i}]\n文档：{doc_name}\n块id：{cid}\n年份：{year}\n"
-            f"页码：{page}\n正文：{formatted_body}"
-        )
+        evidences.append(format_evidence(i, cid, year, page, "".join(sections)))
     return "\n\n".join(evidences)
 
 
