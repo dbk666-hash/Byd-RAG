@@ -32,7 +32,10 @@ def main():
                                    "radius": config.CONTEXT_RADIUS, "trust_env": config.TRUST_ENV}}
             try:
                 record.update(answer_question(question["question"]))
-                record["status"] = "completed" if record["retrieved_records"] else "empty_retrieval"
+                if record.get("missing_years"):
+                    record["status"] = "missing_year_evidence"
+                else:
+                    record["status"] = "completed" if record["retrieved_records"] else "empty_retrieval"
             except Exception as exc:
                 record.update(status="failed", error_type=type(exc).__name__)
                 response = getattr(exc, "response", None)

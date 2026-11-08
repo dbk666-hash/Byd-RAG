@@ -1,7 +1,7 @@
 """关键词原文定位与年份过滤后的向量诊断。"""
 import re
 from config import PARSED
-from retrieval import extract_years, get_retriever
+from retrieval import get_retriever, resolve_report_years
 
 def kw_locate(kw: str):
     """扫描全部年报,报告每个词出现在哪些年份的哪些页"""
@@ -24,7 +24,7 @@ def kw_locate(kw: str):
 
 def main():
     query = input("要诊断的问题> ").strip()
-    print("目标年份：", extract_years(query) or "全部年份")
+    print("目标年份：", resolve_report_years(query) or "全部年份")
     result = get_retriever().vector_results(query, 5)
     for doc, meta in zip(result["documents"][0], result["metadatas"][0]):
         print(f"[{meta['year']}年报·第{meta['page']}页] {doc.replace(chr(10), ' ')[:160]}")

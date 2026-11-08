@@ -17,7 +17,7 @@ import config
 from chunk import chunk_text, load_corpus
 from context import build_prompt, expand_context, format_context
 from pipeline import NO_EVIDENCE, answer_question
-from retrieval import Retriever, rrf_fuse
+from retrieval import Retriever, resolve_report_years, rrf_fuse
 
 
 class Response:
@@ -110,6 +110,68 @@ print("safe imports")
         self.assertEqual(result["evidence_records"], [])
         self.assertIsNone(result["prompt"])
         rerank.assert_not_called()
+        chat.assert_not_called()
+
+    def test_previous_year_uses_the_explicit_question_year(self):
+        self.assertEqual(resolve_report_years("2022年比去年多了多少？"), ["2022", "2021"])
+        self.assertEqual(resolve_report_years("2022年的上一年度"), ["2022", "2021"])
+        self.assertEqual(resolve_report_years("2022年和2021年相比去年"), ["2022", "2021"])
+        self.assertEqual(resolve_report_years("比去年多了多少？"), [])
+
+    def test_cross_year_pipeline_keeps_both_reports_after_rerank(self):
+        collection = Mock()
+        collection.query.side_effect = [
+            {"ids": [["BYD_2022_161", "BYD_2022_380", "BYD_2022_365", "BYD_2022_491"]]},
+            {"ids": [["BYD_2021_147", "BYD_2021_148"]]},
+        ]
+        engine = Retriever(parsed_dir=config.ROOT / "data/parsed", collection=collection)
+        year_by_body = {record[3]: record[1] for record in engine.meta.values()}
+
+        def rerank(query, documents, top_n):
+            def priority(index):
+                body = documents[index]
+                return year_by_body[body], "报告期末在职员工的数量合计" in body
+
+            return sorted(range(len(documents)), key=priority, reverse=True)[:top_n]
+
+        query = "2022年比亚迪在职员工比去年多了多少？"
+        with patch("api_client.embed_one", return_value=[0.1]) as embed, patch(
+            "api_client.rerank", side_effect=rerank
+        ) as rank, patch("api_client.chat_reply") as chat:
+            result = answer_question(query, retriever=engine, candidate_n=4, top_k=2, radius=0)
+
+        embed.assert_called_once_with(query)
+        self.assertEqual(
+            [call.kwargs["where"] for call in collection.query.call_args_list],
+            [{"year": {"$in": ["2022", "2021"]}}, {"year": {"$in": ["2021"]}}],
+        )
+        self.assertGreater(rank.call_args.args[2], 2)
+        self.assertEqual({row[1] for row in result["retrieved_records"]}, {"2022", "2021"})
+        self.assertIn("570,060", result["context"])
+        self.assertIn("288,186", result["context"])
+        self.assertIn("570,060 人 [证据2]", result["answer"])
+        self.assertIn("288,186 人 [证据1]", result["answer"])
+        self.assertIn("增加 281,874 人", result["answer"])
+        chat.assert_not_called()
+
+    def test_cross_year_pipeline_reports_missing_year_before_generation(self):
+        with patch("api_client.embed_one", return_value=[0.1]), patch(
+            "api_client.rerank", return_value=[0]
+        ), patch("api_client.chat_reply") as chat:
+            result = answer_question("2023年营业收入比去年多了多少？", retriever=self.engine())
+        self.assertEqual(result["missing_years"], ["2022"])
+        self.assertIn("未检索到 2022 年", result["answer"])
+        self.assertEqual({row[1] for row in result["evidence_records"]}, {"2023"})
+        self.assertIsNone(result["prompt"])
+        chat.assert_not_called()
+
+    def test_cross_year_employee_comparison_requires_the_total_row_in_each_report(self):
+        engine = self.engine()
+        with patch.object(engine, "retrieve", return_value=list(engine.meta.values())), patch(
+            "api_client.chat_reply"
+        ) as chat:
+            result = answer_question("2024年在职员工比去年多了多少？", retriever=engine)
+        self.assertEqual(result["missing_years"], ["2024", "2023"])
         chat.assert_not_called()
 
     def test_rrf_fusion_preserves_ties_and_combines_both_lanes(self):
