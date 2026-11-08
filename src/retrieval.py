@@ -29,7 +29,8 @@ class Retriever:
     """同一份语料、块ID和元数据供向量、BM25及上下文扩展复用。"""
 
     def __init__(self, parsed_dir=None, db_path=None, collection=None):
-        self.corpus, self.id_list, self.meta = load_corpus(parsed_dir or config.PARSED)
+        self.parsed_dir = parsed_dir or config.PARSED
+        self.corpus, self.id_list, self.meta = load_corpus(self.parsed_dir)
         self.db_path = Path(db_path or config.DB_PATH)
         self._collection = collection
         self._client = None

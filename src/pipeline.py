@@ -16,7 +16,7 @@ def answer_question(query, *, retriever=None, candidate_n=config.CANDIDATE_N,
         return {"query": query, "answer": NO_EVIDENCE, "retrieved_records": [],
                 "evidence_records": [], "context": "", "prompt": None}
     records = expand_context(retrieved, engine.meta, max_chars, radius)
-    context = format_context(records)
+    context = format_context(records, parsed_dir=getattr(engine, "parsed_dir", None))
     prompt = build_prompt(query, context)
     return {"query": query, "answer": api_client.chat_reply(prompt),
             "retrieved_records": retrieved, "evidence_records": records,

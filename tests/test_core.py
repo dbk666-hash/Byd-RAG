@@ -118,6 +118,56 @@ print("safe imports")
         self.assertEqual(result["answer"], "回答[证据1]")
         self.assertTrue(all(row[1] == "2024" for row in result["evidence_records"]))
 
+    def test_pipeline_labels_cross_table_evidence_by_fragment(self):
+        report = (
+            "=====PAGE 8=====\n表外说明\n二、财务报表\n"
+            "财务附注中报表的单位：千元\n"
+            "1、合并现金流量表\n职工现金 111\n"
+            "2、公司现金流量表\n单位：元\n职工现金 222\n"
+            "三、基本情况\n表后说明"
+        )
+        (self.parsed / "BYD_2023.txt").write_text(report, encoding="utf-8")
+        engine = self.engine()
+        record = engine.meta["BYD_2023_0"]
+        with patch.object(engine, "retrieve", return_value=[record]), patch(
+            "api_client.chat_reply", return_value="回答[证据1]"
+        ) as chat:
+            result = answer_question("2023年职工现金", retriever=engine)
+
+        context = result["context"]
+        self.assertEqual(context.count("[证据1]"), 1)
+        self.assertIn("合并现金流量表｜单位：千元｜单位来源：PDF 第 8 页】\n1、合并现金流量表\n职工现金 111", context)
+        self.assertIn("公司现金流量表｜单位：元｜单位来源：PDF 第 8 页】\n2、公司现金流量表\n单位：元\n职工现金 222", context)
+        self.assertLess(context.index("表外说明"), context.index("【表格片段｜"))
+        self.assertGreater(context.index("表后说明"), context.rindex("【表格片段结束】"))
+        self.assertIn(context, chat.call_args.args[0])
+        stale = ("BYD_2023_0", "2023", 8, "旧索引正文")
+        self.assertTrue(format_context([stale], parsed_dir=self.parsed).endswith("正文：旧索引正文"))
+
+    def test_note_amount_tables_inherit_report_unit_only_within_table(self):
+        report = (
+            "=====PAGE 1=====\n二、财务报表\n1、合并资产负债表\n资产 100\n"
+            "三、基本情况\n编制本财务报表，除有特别说明外，均以人民币千元为单位表示。\n"
+            "=====PAGE 2=====\n七、合并财务报表主要项目注释\n3.\n应收账款\n"
+            "应收账款的账龄分析如下：\n2022 年\n2021 年\n38,828,494\n36,251,280\n"
+            "上述应收账款含补贴款。\n比例(%)\n2.54\n"
+            "61、所得税费用\n2022 年\n2021 年\n3,366,625\n550,737\n单位：元\n"
+            "所得税费用与利润总额的关系列示如下：\n2022 年\n2021 年\n"
+            "按本集团实际税率计算的所得税费用\n3,366,625\n550,737\n注1：税率说明\n"
+            "62、每股收益\n元/股\n5.71\n八、合并范围的变动\n"
+        )
+        (self.parsed / "BYD_2022.txt").write_text(report, encoding="utf-8")
+        records = [(f"BYD_2022_{i}", "2022", page, body)
+                   for i, (page, body) in enumerate(chunk_text(report))]
+        context = format_context(records, parsed_dir=self.parsed)
+
+        self.assertIn("应收账款账龄分析｜单位：千元｜单位来源：PDF 第 1 页｜年份列顺序：2022 年、2021 年", context)
+        self.assertIn("所得税费用｜单位：元｜单位来源：PDF 第 2 页", context)
+        self.assertIn("所得税费用与利润总额的关系｜单位：千元", context)
+        self.assertRegex(context, r"36,251,280\n\n【表格片段结束】\n上述应收账款")
+        self.assertNotIn("每股收益｜单位：千元", context)
+        self.assertEqual(context.count("5.71"), 1)
+
     def test_batch_embedding_response_index_order(self):
         response = Response({"data": [{"index": 1, "embedding": [1]}, {"index": 0, "embedding": [0]}]})
         with patch.dict("os.environ", {"SILICONFLOW_API_KEY": "test-key"}, clear=True), patch.object(api_client.sf_session, "post", return_value=response):
