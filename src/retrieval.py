@@ -76,15 +76,16 @@ class Retriever:
                 break
         return matches
 
-    def retrieve(self, query, top_k=5, candidate_n=10, use_rerank=False):
-        """返回 [(cid, year, page, text), ...]；保留原检索默认参数。"""
+    def retrieve(self, query, top_k=config.TOP_K, candidate_n=config.CANDIDATE_N,
+                 use_rerank=False, *, candidate_rrf=config.CANDIDATE_RRF):
+        """返回 [(cid, year, page, text), ...]。"""
         vec_ids = self.vector_candidates(query, candidate_n)
-        bm_ids = [cid for cid, score in self.bm25_candidates(query, candidate_n)]
-        if not use_rerank:
-            return [self.meta[cid] for cid, score in rrf_fuse(vec_ids, bm_ids, top_k)]
-        ids = list(dict.fromkeys(vec_ids + bm_ids))
-        if not ids:
-            return []
+        bm_ids = [cid for cid, _ in self.bm25_candidates(query, candidate_n)]
+        limit = candidate_rrf if use_rerank else top_k
+        ids = [cid for cid, _ in rrf_fuse(vec_ids, bm_ids, limit)]
+        if not use_rerank or not ids:
+            return [self.meta[cid] for cid in ids]
+
         documents = [self.meta[cid][3] for cid in ids]
         indices = api_client.rerank(query, documents, top_k)
         return [self.meta[ids[index]] for index in indices]
@@ -95,5 +96,8 @@ def get_retriever():
     return Retriever()
 
 
-def retrieve(query, top_k=5, candidate_n=10, use_rerank=False):
-    return get_retriever().retrieve(query, top_k, candidate_n, use_rerank)
+def retrieve(query, top_k=config.TOP_K, candidate_n=config.CANDIDATE_N,
+             use_rerank=False, *, candidate_rrf=config.CANDIDATE_RRF):
+    return get_retriever().retrieve(
+        query, top_k, candidate_n, use_rerank, candidate_rrf=candidate_rrf,
+    )

@@ -90,6 +90,20 @@ print("safe imports")
         self.assertEqual(engine.col.query.call_args.kwargs["where"], {"year": {"$in": ["2024", "2023"]}})
         self.assertEqual(rerank.call_args.args[1], [engine.meta["BYD_2024_0"][3], engine.meta["BYD_2023_0"][3]])
 
+    def test_retrieve_keeps_positional_rerank_and_limits_rrf_candidates(self):
+        from retrieval import retrieve
+
+        engine = self.engine()
+        with patch("retrieval.get_retriever", return_value=engine), patch(
+            "api_client.embed_one", return_value=[0.1]
+        ), patch("api_client.rerank", return_value=[0]) as rerank:
+            rows = retrieve("2024和2023年营业收入", 1, 2, True, candidate_rrf=1)
+
+        self.assertEqual(len(rows), 1)
+        rerank.assert_called_once()
+        self.assertEqual(rerank.call_args.args[1], [rows[0][3]])
+        self.assertEqual(rerank.call_args.args[2], 1)
+
     def test_empty_retrieval_never_calls_generation_or_rerank(self):
         with patch("api_client.embed_one", return_value=[0.1]), patch("api_client.rerank") as rerank, patch("api_client.chat_reply") as chat:
             result = answer_question("2099年营业收入", retriever=self.engine())
