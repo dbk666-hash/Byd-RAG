@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 PARSED = Path(os.getenv("RAG_PARSED_DIR", str(ROOT / "data/parsed")))
-DB_PATH = Path(os.getenv("RAG_DB_PATH", str(ROOT / "data/chroma")))
-COLLECTION_NAME = "byd_reports"
+DB_PATH = Path(os.getenv("RAG_DB_PATH", str(ROOT / "data/chroma-page-v1")))
+COLLECTION_NAME = "byd_reports_page_v1"
 
 # 修改切块或向量模型后必须另建匹配索引，不能继续复用旧向量。
 CHUNK_SIZE, OVERLAP = 512, 64

@@ -1,21 +1,39 @@
-"""唯一的512/64切块实现；建库、检索和预览均从这里导入。"""
+"""唯一的页内 512/64 切块实现，供建库、检索和预览共用。"""
 import re
 from pathlib import Path
 
 from config import CHUNK_SIZE, OVERLAP, PARSED
+from extract_unit import PAGE_MARKER
+
+
+def page_ranges(text):
+    """返回页码和正文在原始文本中的起止位置。"""
+    markers = list(PAGE_MARKER.finditer(text))
+    if not markers:
+        yield 0, 0, len(text)
+        return
+
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        yield int(marker[1]), marker.end(), end
+
+
+def chunk_spans(text):
+    """页内滑窗，返回 (页码, 原文起点, 原文终点)。"""
+    for page, start, end in page_ranges(text):
+        body = text[start:end]
+        start += len(body) - len(body.lstrip())
+        end -= len(body) - len(body.rstrip())
+        while start < end:
+            stop = min(start + CHUNK_SIZE, end)
+            yield page, start, stop
+            if stop == end:
+                break
+            start += CHUNK_SIZE - OVERLAP
+
 
 def chunk_text(text: str):
-    """512/64 固定窗口切块 —— 顺序与 build_index 完全一致,块 id 才能对齐"""
-    chunks, last_page, i, n = ([], 0, 0, len(text))
-    while i < n:
-        latter = min(i + CHUNK_SIZE, len(text))
-        window = text[i:latter]
-        pages = re.findall('PAGE (\\d+)', window)
-        if pages:
-            last_page = int(pages[-1])
-        chunks.append((last_page, window))
-        i += CHUNK_SIZE - OVERLAP
-    return chunks
+    return [(page, text[start:end]) for page, start, end in chunk_spans(text)]
 
 
 def load_corpus(parsed_dir=PARSED):

@@ -14,7 +14,7 @@ sys.path.insert(0, str(SRC))
 import api_client
 import build_index
 import config
-from chunk import chunk_text, load_corpus
+from chunk import chunk_spans, chunk_text, load_corpus
 from context import build_prompt, expand_context, format_context
 from pipeline import NO_EVIDENCE, answer_question
 from retrieval import Retriever, resolve_report_years, rrf_fuse
@@ -56,10 +56,26 @@ class CoreTests(Fixture):
         corpus, ids, meta = load_corpus(self.parsed)
         self.assertEqual(ids, ["BYD_2023_0", "BYD_2024_0"])
         self.assertEqual(meta[ids[1]], (ids[1], "2024", 9, corpus[1]))
-        text = "=====PAGE 1=====\n" + "a"*500 + "=====PAGE 2=====\n" + "b"*500
+        first = "a" * 448 + "b" * 64 + "c" * 88
+        second = "d" * 512
+        text = f"=====PAGE 1=====\n{first}\n=====PAGE 2=====\n \n=====PAGE 3=====\n{second}"
         chunks = chunk_text(text)
-        self.assertEqual(chunks[1][1], text[448:960])
-        self.assertEqual(chunks[1][0], 2)
+        self.assertEqual(chunks, [(1, first[:512]), (1, first[448:]), (3, second)])
+        self.assertEqual(chunks, [(page, text[start:end]) for page, start, end in chunk_spans(text)])
+        self.assertEqual(chunks[0][1][-64:], chunks[1][1][:64])
+        self.assertEqual(chunk_text("没有页标记的旧文本"), [(0, "没有页标记的旧文本")])
+
+    def test_neighbor_expansion_keeps_real_pages_across_boundary(self):
+        (self.parsed / "BYD_2022.txt").write_text(
+            "=====PAGE 221=====\n按本集团实际税率计算的所得税费用\n3,366,625"
+            "\n=====PAGE 222=====\n基本每股收益\n5.71", encoding="utf-8",
+        )
+        _, _, meta = load_corpus(self.parsed)
+        records = expand_context([meta["BYD_2022_0"]], meta, 8000, radius=1)
+        self.assertEqual([record[2] for record in records], [221, 222])
+        context = format_context(records, parsed_dir=self.parsed)
+        self.assertIn("页码：221\n正文：按本集团实际税率计算的所得税费用\n3,366,625", context)
+        self.assertIn("页码：222\n正文：基本每股收益\n5.71", context)
 
     def test_imports_do_not_call_network_db_or_input(self):
         script = '''

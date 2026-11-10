@@ -3,9 +3,8 @@ import re
 from pathlib import Path
 from unicodedata import normalize
 
-import config
+from chunk import chunk_spans
 from context import build_table_ranges, format_evidence
-from extract_unit import PAGE_MARKER
 from retrieval import extract_years
 
 CONSOLIDATED = r"合并(?:口径|资产负债表|报表)?|集团(?:口径)?"
@@ -30,8 +29,7 @@ ASSET_ROW = re.compile(rf"^[ \t]*资产总计[ \t]*\n\s*({AMOUNT})[ \t]*\n\s*({A
 
 def balance_sheet_assets(path, year, meta):
     text = path.read_text(encoding="utf-8")
-    markers = list(PAGE_MARKER.finditer(text))
-    stride = config.CHUNK_SIZE - config.OVERLAP
+    spans = list(chunk_spans(text))
     for start, end, table in build_table_ranges(text):
         name = re.sub(r"\s+", "", table["table_name"])
         scope = BALANCE_SHEETS.get(name)
@@ -45,12 +43,17 @@ def balance_sheet_assets(path, year, meta):
         if len(column_years) != len(row.groups()) or year not in column_years:
             continue
 
-        cid = f"{path.stem}_{row.start() // stride}"
-        record = meta.get(cid)
-        if record is None or row.group() not in record[3]:
+        column = column_years.index(year) + 1
+        amount = row.group(column)
+        value_start, value_end = row.span(column)
+        for index, (page, chunk_start, chunk_end) in enumerate(spans):
+            if chunk_start <= value_start and value_end <= chunk_end:
+                cid = f"{path.stem}_{index}"
+                record = meta.get(cid)
+                if record is not None and record[2:] == (page, text[chunk_start:chunk_end]):
+                    break
+        else:
             continue
-        page = next(int(marker[1]) for marker in reversed(markers) if marker.start() < row.start())
-        amount = row.group(column_years.index(year) + 1)
         years = "、".join(column_years)
         body = (
             f"{table['table_name']}｜{year} 年末资产总计：{amount} {table['unit']}｜"

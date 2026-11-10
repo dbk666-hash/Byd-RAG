@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 import chromadb
+from chromadb.errors import NotFoundError
 import jieba
 from rank_bm25 import BM25Okapi
 
@@ -55,9 +56,12 @@ class Retriever:
     def col(self):
         if self._collection is None:
             if not (self.db_path / "chroma.sqlite3").is_file():
-                raise FileNotFoundError("向量库不存在，请先运行 src/build_index.py")
+                raise FileNotFoundError("按页向量库不存在，请先运行 src/build_index.py")
             self._client = chromadb.PersistentClient(path=str(self.db_path))
-            self._collection = self._client.get_collection(config.COLLECTION_NAME)
+            try:
+                self._collection = self._client.get_collection(config.COLLECTION_NAME)
+            except NotFoundError as error:
+                raise FileNotFoundError("缺少按页向量集合，请先运行 src/build_index.py") from error
         return self._collection
 
     @property

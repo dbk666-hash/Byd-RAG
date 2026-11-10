@@ -2,7 +2,8 @@
 from pathlib import Path
 
 import config
-from extract_unit import PAGE_MARKER, extract_table_units
+from chunk import chunk_spans, page_ranges
+from extract_unit import extract_table_units
 
 
 def expand_context(results, meta, max_chars, radius=2):
@@ -29,15 +30,7 @@ def expand_context(results, meta, max_chars, radius=2):
 def build_table_ranges(text):
     """把表的起止页码和行号换算成原文字符位置。"""
     line_spans = {}
-    markers = list(PAGE_MARKER.finditer(text))
-
-    for index, marker in enumerate(markers):
-        page = int(marker.group(1))
-        offset = marker.end()
-        page_end = (
-            markers[index + 1].start() if index + 1 < len(markers) else len(text)
-        )
-
+    for page, offset, page_end in page_ranges(text):
         for line_no, line in enumerate(
             text[offset:page_end].splitlines(keepends=True), start=1
         ):
@@ -58,15 +51,18 @@ def build_table_ranges(text):
     return ranges
 
 
-def split_chunk_by_table(cid, body, text, table_ranges):
+def split_chunk_by_table(cid, body, text, table_ranges, *, spans=None):
     """按原文顺序返回 (表信息或 None, 正文片段)。"""
     if not table_ranges:
         return [(None, body)]
 
     chunk_index = int(cid.rsplit("_", 1)[1])
-    start = chunk_index * (config.CHUNK_SIZE - config.OVERLAP)
-    end = min(start + config.CHUNK_SIZE, len(text))
-    if not 0 <= start < end or text[start:end] != body:
+    if spans is None:
+        spans = list(chunk_spans(text))
+    if not 0 <= chunk_index < len(spans):
+        return [(None, body)]
+    _, start, end = spans[chunk_index]
+    if text[start:end] != body:
         return [(None, body)]
 
     fragments = []
@@ -105,11 +101,11 @@ def format_context(results, *, parsed_dir=None):
                 text = (parsed_dir / f"{doc_name}.txt").read_text(encoding="utf-8")
             except FileNotFoundError:
                 text = ""
-            reports[doc_name] = text, build_table_ranges(text)
+            reports[doc_name] = text, build_table_ranges(text), list(chunk_spans(text))
 
-        text, table_ranges = reports[doc_name]
+        text, table_ranges, spans = reports[doc_name]
         sections = []
-        for table, fragment in split_chunk_by_table(cid, body, text, table_ranges):
+        for table, fragment in split_chunk_by_table(cid, body, text, table_ranges, spans=spans):
             if table is not None and fragment.strip():
                 label = (
                     f"表格片段｜{table['table_name']}｜单位：{table['unit']}｜"
