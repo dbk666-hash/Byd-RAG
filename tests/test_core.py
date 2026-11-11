@@ -128,6 +128,48 @@ print("safe imports")
         rerank.assert_not_called()
         chat.assert_not_called()
 
+    def test_zero_bm25_candidates_only_abstain_when_vector_is_also_empty(self):
+        engine = self.engine()
+        query = "2024年火星基地有多少人？"
+        engine._bm25 = Mock(get_scores=Mock(return_value=[0.0] * len(engine.corpus)))
+        with patch.object(engine, "vector_candidates", side_effect=[[], ["BYD_2024_0"]]), patch(
+            "api_client.rerank", return_value=[0]
+        ) as rerank, patch("api_client.chat_reply", return_value="向量证据回答") as chat:
+            empty = answer_question(query, retriever=engine)
+            self.assertEqual(empty["answer"], NO_EVIDENCE)
+            self.assertEqual(empty["evidence_records"], [])
+            self.assertIsNone(empty["prompt"])
+            rerank.assert_not_called()
+            chat.assert_not_called()
+
+            vector_only = answer_question(query, retriever=engine)
+            self.assertEqual(vector_only["answer"], "向量证据回答")
+            self.assertEqual(vector_only["retrieved_records"], [engine.meta["BYD_2024_0"]])
+            rerank.assert_called_once()
+            chat.assert_called_once()
+
+    def test_rerank_score_filter_can_return_no_evidence(self):
+        engine = self.engine()
+        response = Response({"results": [{"index": 0, "relevance_score": 0.25}]})
+        with patch("api_client.embed_one", return_value=[0.1]), patch(
+            "api_client._headers", return_value={}
+        ), patch.object(api_client.sf_session, "post", return_value=response), patch(
+            "api_client.chat_reply", return_value="answer"
+        ) as chat, patch.object(config, "DEBUG_RERANK", False), patch.object(
+            config, "RERANK_MIN_SCORE", 0.5
+        ):
+            result = answer_question("2024 query", retriever=engine)
+            self.assertEqual(result["answer"], NO_EVIDENCE)
+            self.assertEqual(result["evidence_records"], [])
+            self.assertIsNone(result["prompt"])
+            chat.assert_not_called()
+
+            with patch.object(config, "RERANK_MIN_SCORE", 0.25):
+                result = answer_question("2024 query", retriever=engine)
+            self.assertEqual(result["answer"], "answer")
+            self.assertEqual(result["retrieved_records"], [engine.meta["BYD_2024_0"]])
+            chat.assert_called_once()
+
     def test_previous_year_uses_the_explicit_question_year(self):
         self.assertEqual(resolve_report_years("2022年比去年多了多少？"), ["2022", "2021"])
         self.assertEqual(resolve_report_years("2022年的上一年度"), ["2022", "2021"])

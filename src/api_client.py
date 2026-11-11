@@ -61,7 +61,13 @@ def rerank(query, documents, top_k=5):
               "documents": documents, "top_n": top_k}, timeout=60,
     )
     response.raise_for_status()
-    return [row["index"] for row in response.json()["results"]]
+    results = response.json()["results"]
+    if config.DEBUG_RERANK:
+        print("Rerank (index, relevance_score):",
+              [(row["index"], row["relevance_score"]) for row in results])
+    min_score = config.RERANK_MIN_SCORE
+    return [row["index"] for row in results
+            if min_score is None or row["relevance_score"] >= min_score]
 
 
 def chat_reply(prompt):

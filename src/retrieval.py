@@ -112,7 +112,7 @@ class Retriever:
             if years and self.meta[cid][1] not in years:
                 continue
             score = float(scores[index])
-            if cross_year and score == 0:
+            if score == 0:
                 continue
             matches[cid] = score
             if not cross_year and len(matches) >= candidate_n:
