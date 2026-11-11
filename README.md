@@ -33,12 +33,23 @@ if (!(Test-Path .env)) { Copy-Item .env.example .env }
 
 省略 `--query` 进入交互问答。按页版本首次运行需要建新索引，默认使用 `data/chroma-page-v1/` 和 `byd_reports_page_v1` 集合。已有匹配的按页索引时可直接提问。旧版索引和历史评测结果使用原切块编号。
 
+### 可选：离线体验 BM25
+
+安装依赖后即可运行，无需 API 密钥或向量索引。输入问题后会显示命中的年报片段及页码。
+
+```powershell
+.\.venv\Scripts\python.exe src/bm25_search.py
+```
+
 ## 测试与评测
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-在 50 道比亚迪年报开发题的固定证据回归中，补充表格和附注单位后，核心答案正确率从 70% 提升到 80%，金额、单位和报表口径正确率从 45% 提升到 85%（20 道金额题）。结果来自旧切块的单位标注对照。评测用法见 [eval/README.md](eval/README.md)。
+- **当前按页版本。** 在 CFQA 改编的 50 道开发题上，关闭阈值与使用 Rerank 阈值 0.8 均答对 38 题，标注证据页 Recall@5 从 53% 降至 50%。另测 4 道应拒答题，生成前直接拒答从 1 题增至 3 题。[阈值对照报告](eval/rerank-threshold-08.md)
+- **旧切块版本。** 固定证据的表格与附注单位实验中，核心答案正确率从 70% 提升到 80%，20 道金额题的金额、单位与口径正确率从 45% 提升到 85%。
+
+评测命令、题集和评分口径见 [评测说明](eval/README.md)。
 
 这是一个 AI 辅助开发的学习项目。模型给出的金额和引用可回到年报原文核对。

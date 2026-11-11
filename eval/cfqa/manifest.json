@@ -1,0 +1,24 @@
+{
+  "dataset": "CFQA by ygan et al., not Zhu et al. 2026 same-name dataset",
+  "repository": "https://github.com/ygan/CFQA",
+  "tree_sha": "61c9ec3c4335d0411a1735cd228af8b3ead114fc",
+  "official_split": "dataset/split_by_year/split_by_year_test.json",
+  "official_blob_sha": "ebb3b7ac5e18741534677bdd3dba9a5b3dcb49ce",
+  "official_file_sha256": "9e14d2659a155d3f0f27cac1687c36fb8bcb5b3040ad054547bc3ccf0c320085",
+  "official_test_count": 2084,
+  "adapted_current_corpus_count": 5,
+  "selection": "Official year-test only; company BYD/002594; question report year 2022 matches local corpus. No train or dev cases added.",
+  "excluded_test_count": 2079,
+  "retained_source_ids": [
+    8508,
+    8512,
+    8516,
+    8520,
+    8524
+  ],
+  "license": "MIT; preserved author LICENSE. Report PDFs remain third-party disclosures.",
+  "frozen_on": "2026-11-06",
+  "reference_status": "Original answers unchanged, not independently verified; do not auto-grade or infer unanswerability from missing page annotation.",
+  "subset_note": "5 questions only, not a full official CFQA score; natural investor-origin sources are not guaranteed colloquial-only.",
+  "old_dev50": "eval/questions.jsonl remains unchanged as regression/development data"
+}

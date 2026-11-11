@@ -1,0 +1,27 @@
+{
+  "cases": 50,
+  "unique_source_ids": 50,
+  "unique_query_targets": 50,
+  "original_test_only": true,
+  "original_year_test_blob": "ebb3b7ac5e18741534677bdd3dba9a5b3dcb49ce",
+  "source_text_offsets_checked": 60,
+  "pdf_page_text_checks_passed": 60,
+  "pdf_page_text_mismatches": [],
+  "pdf_visual_sample_pages": [
+    8,
+    16,
+    22,
+    57,
+    113,
+    121,
+    127,
+    129
+  ],
+  "arithmetic_recomputed": true,
+  "existing_evaluator_consumed_all_50": true,
+  "network_and_model_calls": 0,
+  "independent_second_reviewer": false,
+  "real_evaluation_run": false,
+  "offline_check_used_simulated_output": true,
+  "questions_sha256": "d520808991a0e6b740635bd3bb443985c744fe642ef6ff5a97bde0efc93f81aa"
+}
